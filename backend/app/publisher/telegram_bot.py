@@ -130,7 +130,7 @@ class TelegramPublisher:
                     "chat_id": self.target_channel,
                     "caption": caption,
                     "parse_mode": "HTML",
-                    "supports_streaming": True,
+                    "supports_streaming": "true",
                     "disable_web_page_preview": True,
                 },
                 files={"video": ("video.mp4", content, content_type or "video/mp4")},
