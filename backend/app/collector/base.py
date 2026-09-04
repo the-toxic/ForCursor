@@ -17,3 +17,6 @@ class CollectedPost:
     html_text: str = ""
     video_url: str | None = None
     photo_urls: tuple[str, ...] = ()
+    photo_bytes: bytes | None = None
+    photo_bytes_list: tuple[bytes, ...] = ()
+    video_bytes: bytes | None = None

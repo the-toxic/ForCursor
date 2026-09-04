@@ -77,6 +77,13 @@ function statusClass(status: string): string {
   }
   return "bg-slate-500/15 text-slate-300 ring-slate-400/20";
 }
+
+function sourceLabel(name: string): string {
+  if (name.startsWith("invite_") || name.startsWith("+") || name.includes(" ")) {
+    return name;
+  }
+  return `@${name}`;
+}
 </script>
 
 <template>
@@ -117,7 +124,8 @@ function statusClass(status: string): string {
         </h1>
         <p class="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
           Бот читает выбранные каналы, отбрасывает повторы по смыслу и тексту,
-          а в ваш канал отправляет только то, чего ещё не было.
+          а в ваш канал отправляет только то, чего ещё не было. Закрытые каналы
+          подключаются по invite-ссылке после входа в Telegram-аккаунт.
         </p>
       </div>
       <div class="flex flex-wrap gap-3">
@@ -211,7 +219,7 @@ function statusClass(status: string): string {
               <span class="rounded-full px-2.5 py-1 text-xs font-medium ring-1" :class="statusClass(item.status)">
                 {{ statusLabel(item.status) }}
               </span>
-              <span class="text-xs text-slate-400">@{{ item.source_username }}</span>
+              <span class="text-xs text-slate-400">{{ sourceLabel(item.source_username) }}</span>
               <span v-if="item.similarity" class="text-xs text-slate-500">
                 похожесть {{ Math.round(item.similarity * 100) }}%
               </span>
@@ -226,13 +234,16 @@ function statusClass(status: string): string {
       <div class="space-y-6">
         <section class="rounded-3xl border border-white/10 bg-slate-950/40 p-5 sm:p-6">
           <h2 class="text-lg font-semibold text-white">Каналы-источники</h2>
-          <p class="mt-1 text-sm text-slate-400">Публичные каналы, которые бот будет сравнивать между собой.</p>
+          <p class="mt-1 text-sm text-slate-400">
+            Публичный @username или ссылка-приглашение
+            <span class="text-slate-300">t.me/+…</span> / <span class="text-slate-300">t.me/joinchat/…</span>.
+          </p>
 
           <form class="mt-4 flex gap-2" @submit.prevent="store.addSource">
             <input
               v-model="store.newUsername"
               type="text"
-              placeholder="@channel или username"
+              placeholder="@channel или https://t.me/+invite"
               class="w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white outline-none ring-amber-400/0 focus:ring-2"
             />
             <button
@@ -251,8 +262,17 @@ function statusClass(status: string): string {
               class="flex items-center justify-between gap-3 rounded-2xl border border-white/8 bg-white/4 px-3 py-3"
             >
               <div>
-                <p class="text-sm font-medium text-white">{{ source.title || source.username }}</p>
-                <p class="text-xs text-slate-400">@{{ source.username }}</p>
+                <p class="text-sm font-medium text-white">{{ source.title || sourceLabel(source.username) }}</p>
+                <p class="text-xs text-slate-400">
+                  <span
+                    v-if="source.source_kind === 'private'"
+                    class="mr-1 rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] font-medium text-violet-200 ring-1 ring-violet-400/20"
+                  >
+                    закрытый
+                  </span>
+                  <span v-if="source.source_kind === 'private'">по ссылке-приглашению</span>
+                  <span v-else>{{ sourceLabel(source.username) }}</span>
+                </p>
                 <p v-if="source.error" class="mt-1 text-xs text-rose-300">{{ source.error }}</p>
               </div>
               <div class="flex items-center gap-2">
@@ -273,6 +293,121 @@ function statusClass(status: string): string {
               </div>
             </li>
           </ul>
+        </section>
+
+        <section class="rounded-3xl border border-white/10 bg-slate-950/40 p-5 sm:p-6">
+          <h2 class="text-lg font-semibold text-white">Закрытые каналы</h2>
+          <p class="mt-1 text-sm text-slate-400">
+            Бот не умеет входить по invite-ссылке. Нужен ваш Telegram-аккаунт:
+            API ID и Hash с
+            <a
+              class="text-amber-200 underline decoration-amber-200/40 underline-offset-2"
+              href="https://my.telegram.org/apps"
+              target="_blank"
+              rel="noreferrer"
+            >my.telegram.org</a>,
+            затем телефон и код.
+          </p>
+
+          <div v-if="store.telegramUser?.authorized" class="mt-4 rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-3 py-3">
+            <p class="text-sm text-emerald-100">
+              Вошли как
+              {{ store.telegramUser.first_name || "аккаунт" }}
+              <span v-if="store.telegramUser.username">@{{ store.telegramUser.username }}</span>
+              <span v-if="store.telegramUser.phone" class="text-emerald-200/80"> · +{{ store.telegramUser.phone }}</span>
+            </p>
+            <button
+              type="button"
+              class="mt-3 rounded-lg px-2 py-1 text-xs text-emerald-100 hover:bg-white/10"
+              :disabled="store.isBusy"
+              @click="store.logoutTelegram"
+            >
+              Выйти из Telegram
+            </button>
+          </div>
+
+          <div v-else class="mt-4 space-y-3">
+            <p
+              v-if="store.telegramUser?.configured"
+              class="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-300"
+            >
+              API-данные сохранены. Осталось войти по номеру телефона.
+            </p>
+            <div class="grid gap-3 sm:grid-cols-2">
+              <label class="block text-sm text-slate-300">
+                API ID
+                <input
+                  v-model="store.telegramApiId"
+                  type="text"
+                  inputmode="numeric"
+                  class="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white"
+                  placeholder="123456"
+                />
+              </label>
+              <label class="block text-sm text-slate-300">
+                API Hash
+                <input
+                  v-model="store.telegramApiHash"
+                  type="password"
+                  class="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white"
+                  placeholder="из my.telegram.org"
+                />
+              </label>
+            </div>
+            <button
+              type="button"
+              class="w-full rounded-xl border border-white/10 bg-white/5 py-2 text-sm font-medium text-white hover:bg-white/10 disabled:opacity-50"
+              :disabled="store.isBusy"
+              @click="store.saveTelegramCredentials"
+            >
+              Сохранить API ID и Hash
+            </button>
+            <label class="block text-sm text-slate-300">
+              Телефон
+              <input
+                v-model="store.telegramPhone"
+                type="tel"
+                class="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white"
+                placeholder="+79001234567"
+              />
+            </label>
+            <button
+              type="button"
+              class="w-full rounded-xl bg-white px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
+              :disabled="store.isBusy"
+              @click="store.sendTelegramCode"
+            >
+              Получить код
+            </button>
+            <div v-if="store.telegramCodeSent" class="space-y-3">
+              <label class="block text-sm text-slate-300">
+                Код из Telegram
+                <input
+                  v-model="store.telegramCode"
+                  type="text"
+                  class="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white"
+                  placeholder="12345"
+                />
+              </label>
+              <label class="block text-sm text-slate-300">
+                Пароль 2FA, если включён
+                <input
+                  v-model="store.telegramPassword"
+                  type="password"
+                  class="mt-1 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white"
+                  placeholder="необязательно"
+                />
+              </label>
+              <button
+                type="button"
+                class="w-full rounded-xl bg-amber-400 px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
+                :disabled="store.isBusy"
+                @click="store.signInTelegram"
+              >
+                Войти в Telegram
+              </button>
+            </div>
+          </div>
         </section>
 
         <section class="rounded-3xl border border-white/10 bg-slate-950/40 p-5 sm:p-6">

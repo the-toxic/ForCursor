@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/aggregator.db"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     auth_key: str = "toxic"
+    telegram_api_id: int = 0
+    telegram_api_hash: str = ""
+    telegram_session_path: str = "./data/telegram_user"
 
     @property
     def is_demo(self) -> bool:

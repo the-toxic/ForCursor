@@ -8,6 +8,7 @@ import {
   type RuntimeSettings,
   type Source,
   type Stats,
+  type TelegramUserStatus,
 } from "../api/client";
 
 export const useAggregatorStore = defineStore("aggregator", () => {
@@ -21,6 +22,13 @@ export const useAggregatorStore = defineStore("aggregator", () => {
   const lastResult = ref<FetchResult | null>(null);
   const statusFilter = ref("");
   const newUsername = ref("");
+  const telegramUser = ref<TelegramUserStatus | null>(null);
+  const telegramApiId = ref("");
+  const telegramApiHash = ref("");
+  const telegramPhone = ref("");
+  const telegramCode = ref("");
+  const telegramPassword = ref("");
+  const telegramCodeSent = ref(false);
 
   const isDemo = computed(() => settings.value?.app_mode === "demo");
   const uniqueShare = computed(() => {
@@ -37,16 +45,19 @@ export const useAggregatorStore = defineStore("aggregator", () => {
     isLoading.value = true;
     hasError.value = "";
     try {
-      const [nextStats, nextSources, nextItems, nextSettings] = await Promise.all([
+      const [nextStats, nextSources, nextItems, nextSettings, nextTelegram] = await Promise.all([
         api.stats(),
         api.sources(),
         api.items(statusFilter.value || undefined),
         api.settings(),
+        api.telegramUser(),
       ]);
       stats.value = nextStats;
       sources.value = nextSources;
       items.value = nextItems;
       settings.value = nextSettings;
+      telegramUser.value = nextTelegram;
+      telegramCodeSent.value = nextTelegram.code_sent;
     } catch (error) {
       hasError.value = error instanceof Error ? error.message : "Не удалось загрузить данные";
     } finally {
@@ -113,6 +124,86 @@ export const useAggregatorStore = defineStore("aggregator", () => {
     }
   }
 
+  async function saveTelegramCredentials() {
+    const apiId = Number(telegramApiId.value);
+    if (!apiId || !telegramApiHash.value.trim()) {
+      hasError.value = "Укажите API ID и API Hash с my.telegram.org";
+      return;
+    }
+    isBusy.value = true;
+    hasError.value = "";
+    try {
+      telegramUser.value = await api.saveTelegramCredentials(apiId, telegramApiHash.value.trim());
+      telegramApiHash.value = "";
+    } catch (error) {
+      hasError.value = error instanceof Error ? error.message : "Не удалось сохранить API-данные";
+    } finally {
+      isBusy.value = false;
+    }
+  }
+
+  async function sendTelegramCode() {
+    if (!telegramPhone.value.trim()) {
+      hasError.value = "Укажите номер телефона в формате +79001234567";
+      return;
+    }
+    isBusy.value = true;
+    hasError.value = "";
+    try {
+      const apiId = Number(telegramApiId.value);
+      const apiHash = telegramApiHash.value.trim();
+      await api.sendTelegramCode(
+        telegramPhone.value.trim(),
+        apiId || undefined,
+        apiHash || undefined,
+      );
+      telegramCodeSent.value = true;
+      telegramUser.value = await api.telegramUser();
+    } catch (error) {
+      hasError.value = error instanceof Error ? error.message : "Не удалось отправить код";
+    } finally {
+      isBusy.value = false;
+    }
+  }
+
+  async function signInTelegram() {
+    if (!telegramPhone.value.trim() || !telegramCode.value.trim()) {
+      hasError.value = "Введите номер и код из Telegram";
+      return;
+    }
+    isBusy.value = true;
+    hasError.value = "";
+    try {
+      telegramUser.value = await api.signInTelegram(
+        telegramPhone.value.trim(),
+        telegramCode.value.trim(),
+        telegramPassword.value.trim() || undefined,
+      );
+      telegramCode.value = "";
+      telegramPassword.value = "";
+      telegramCodeSent.value = false;
+    } catch (error) {
+      hasError.value = error instanceof Error ? error.message : "Не удалось войти в Telegram";
+    } finally {
+      isBusy.value = false;
+    }
+  }
+
+  async function logoutTelegram() {
+    isBusy.value = true;
+    hasError.value = "";
+    try {
+      telegramUser.value = await api.logoutTelegram();
+      telegramCodeSent.value = false;
+      telegramCode.value = "";
+      telegramPassword.value = "";
+    } catch (error) {
+      hasError.value = error instanceof Error ? error.message : "Не удалось выйти из Telegram";
+    } finally {
+      isBusy.value = false;
+    }
+  }
+
   async function resetDemo() {
     isBusy.value = true;
     hasError.value = "";
@@ -137,6 +228,13 @@ export const useAggregatorStore = defineStore("aggregator", () => {
     lastResult,
     statusFilter,
     newUsername,
+    telegramUser,
+    telegramApiId,
+    telegramApiHash,
+    telegramPhone,
+    telegramCode,
+    telegramPassword,
+    telegramCodeSent,
     isDemo,
     uniqueShare,
     refresh,
@@ -146,5 +244,9 @@ export const useAggregatorStore = defineStore("aggregator", () => {
     saveSettings,
     fetchNow,
     resetDemo,
+    saveTelegramCredentials,
+    sendTelegramCode,
+    signInTelegram,
+    logoutTelegram,
   };
 });

@@ -11,6 +11,8 @@ from app.auth import AccessKeyMiddleware
 from app.config import get_settings
 from app.db import SessionLocal, init_db
 from app.pipeline import NewsPipeline, seed_demo_sources, seed_env_sources
+from app.settings_store import read_runtime_settings, read_telegram_credentials
+from app.telegram_user import telegram_user_service
 
 
 @asynccontextmanager
@@ -25,6 +27,8 @@ async def lifespan(app: FastAPI):
         if settings.is_demo:
             seed_demo_sources(db)
         seed_env_sources(db, settings.source_usernames)
+        api_id, api_hash = read_telegram_credentials(db, settings)
+        await telegram_user_service.try_start(api_id, api_hash, settings.telegram_session_path)
     finally:
         db.close()
 
@@ -35,8 +39,6 @@ async def lifespan(app: FastAPI):
             db_loop = SessionLocal()
             try:
                 runtime_interval = settings.poll_interval_seconds
-                from app.settings_store import read_runtime_settings
-
                 runtime_interval = int(read_runtime_settings(db_loop, settings)["poll_interval_seconds"])
                 await pipeline.run_once(db_loop)
             except Exception:
@@ -58,13 +60,14 @@ async def lifespan(app: FastAPI):
             await task
         except asyncio.CancelledError:
             pass
+        await telegram_user_service.shutdown()
 
 
 def create_app() -> FastAPI:
     settings = get_settings()
     application = FastAPI(
         title="Telegram News Aggregator",
-        description="Сбор публичных каналов, дедупликация и публикация уникальных новостей.",
+        description="Сбор публичных и закрытых каналов, дедупликация и публикация уникальных новостей.",
         lifespan=lifespan,
     )
     application.state.auth_key = settings.auth_key

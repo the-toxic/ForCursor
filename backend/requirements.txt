@@ -10,3 +10,4 @@ sqlalchemy==2.0.43
 python-dotenv==1.1.1
 pytest==8.4.1
 pytest-asyncio==1.1.0
+telethon==1.41.2

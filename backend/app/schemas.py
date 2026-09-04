@@ -1,10 +1,10 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SourceCreate(BaseModel):
-    username: str = Field(min_length=2, max_length=32)
+    username: str = Field(min_length=2, max_length=512)
 
 
 class SourceUpdate(BaseModel):
@@ -17,12 +17,19 @@ class SourceOut(BaseModel):
     username: str
     title: str | None
     enabled: bool
+    source_kind: str = "public"
+    invite_link: str | None = None
     last_post_id: int | None
     last_fetched_at: datetime | None
     error: str | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @field_validator("source_kind", mode="before")
+    @classmethod
+    def default_source_kind(cls, value: str | None) -> str:
+        return value or "public"
 
 
 class ItemOut(BaseModel):
@@ -73,3 +80,31 @@ class FetchResult(BaseModel):
     duplicates: int
     skipped: int
     errors: list[str] = Field(default_factory=list)
+
+
+class TelegramUserStatusOut(BaseModel):
+    configured: bool
+    authorized: bool
+    code_sent: bool = False
+    user_id: int | None = None
+    first_name: str | None = None
+    username: str | None = None
+    phone: str | None = None
+    error: str | None = None
+
+
+class TelegramCredentialsIn(BaseModel):
+    api_id: int = Field(ge=1)
+    api_hash: str = Field(min_length=8, max_length=128)
+
+
+class TelegramSendCodeIn(BaseModel):
+    phone: str = Field(min_length=8, max_length=32)
+    api_id: int | None = Field(default=None, ge=1)
+    api_hash: str | None = Field(default=None, min_length=8, max_length=128)
+
+
+class TelegramSignInIn(BaseModel):
+    phone: str = Field(min_length=8, max_length=32)
+    code: str = Field(min_length=3, max_length=16)
+    password: str | None = None

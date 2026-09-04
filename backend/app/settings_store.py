@@ -10,6 +10,8 @@ RUNTIME_KEYS = (
     "poll_interval_seconds",
     "min_text_length",
     "target_channel",
+    "telegram_api_id",
+    "telegram_api_hash",
 )
 
 
@@ -49,6 +51,17 @@ def read_runtime_settings(db: Session, base: Settings) -> dict[str, object]:
         "app_mode": base.app_mode,
         "bot_configured": bool(base.bot_token and (stored.get("target_channel") or base.target_channel)),
     }
+
+
+def read_telegram_credentials(db: Session, base: Settings) -> tuple[int, str]:
+    stored = {row.key: row.value for row in db.query(AppSetting).all()}
+    raw_id = stored.get("telegram_api_id") or (str(base.telegram_api_id) if base.telegram_api_id else "")
+    api_hash = stored.get("telegram_api_hash") or base.telegram_api_hash or ""
+    try:
+        api_id = int(raw_id) if raw_id else 0
+    except ValueError:
+        api_id = 0
+    return api_id, api_hash
 
 
 def write_runtime_settings(db: Session, updates: dict[str, object]) -> None:

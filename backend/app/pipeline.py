@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 
 from app.collector.base import CollectedPost
 from app.collector.demo import DEMO_POSTS, DemoCollector
-from app.collector.public_preview import PublicPreviewCollector, is_valid_username, normalize_username
+from app.collector.invite import parse_source_ref
+from app.collector.public_preview import PublicPreviewCollector
 from app.config import Settings
 from app.dedup.engine import Candidate, decide
 from app.dedup.normalize import normalize_text, text_hash
@@ -16,7 +17,8 @@ from app.errors import sanitize_error
 from app.models import Item, Source
 from app.publisher.telegram_bot import TelegramPublisher
 from app.schemas import FetchResult
-from app.settings_store import read_runtime_settings
+from app.settings_store import read_runtime_settings, read_telegram_credentials
+from app.telegram_user import telegram_user_service
 
 
 def seed_demo_sources(db: Session) -> None:
@@ -32,13 +34,21 @@ def seed_demo_sources(db: Session) -> None:
 
 def seed_env_sources(db: Session, usernames: list[str]) -> None:
     for raw in usernames:
-        username = normalize_username(raw)
-        if not is_valid_username(username):
+        parsed = parse_source_ref(raw)
+        if parsed is None:
             continue
-        existing = db.scalar(select(Source).where(Source.username == username))
+        existing = db.scalar(select(Source).where(Source.username == parsed.username))
         if existing:
             continue
-        db.add(Source(username=username, enabled=True))
+        db.add(
+            Source(
+                username=parsed.username,
+                enabled=True,
+                source_kind=parsed.kind,
+                invite_hash=parsed.invite_hash,
+                invite_link=parsed.invite_link,
+            )
+        )
     db.commit()
 
 
@@ -48,17 +58,32 @@ class NewsPipeline:
         self._lock = asyncio.Lock()
         self.last_fetch_at: datetime | None = None
 
-    def _collector(self):
-        if self.settings.is_demo:
-            return DemoCollector()
-        return PublicPreviewCollector()
-
     def _publisher(self, target_channel: str) -> TelegramPublisher:
         return TelegramPublisher(
             token=self.settings.bot_token,
             target_channel=target_channel,
             dry_run=self.settings.is_demo or not self.settings.bot_token or not target_channel,
         )
+
+    def _is_private(self, source: Source) -> bool:
+        return (source.source_kind or "public") == "private" or bool(source.invite_hash)
+
+    async def _fetch_posts(self, db: Session, source: Source) -> list[CollectedPost]:
+        if self.settings.is_demo:
+            return await DemoCollector().fetch(source.username)
+        if self._is_private(source):
+            api_id, api_hash = read_telegram_credentials(db, self.settings)
+            posts, title, peer_id = await telegram_user_service.fetch_source(
+                api_id,
+                api_hash,
+                self.settings.telegram_session_path,
+                source,
+                since_id=source.last_post_id,
+            )
+            source.title = title
+            source.telegram_peer_id = str(peer_id)
+            return posts
+        return await PublicPreviewCollector().fetch(source.username)
 
     def _recent_candidates(self, db: Session) -> list[Candidate]:
         rows = (
@@ -165,7 +190,6 @@ class NewsPipeline:
             min_text_length = int(runtime["min_text_length"])
             target_channel = str(runtime["target_channel"])
             publisher = self._publisher(target_channel)
-            collector = self._collector()
             await self.reclassify_duplicates(db, threshold)
             recent = self._recent_candidates(db)
 
@@ -175,7 +199,7 @@ class NewsPipeline:
 
             for source in sources:
                 try:
-                    posts = await collector.fetch(source.username)
+                    posts = await self._fetch_posts(db, source)
                     if posts and posts[0].source_title:
                         source.title = posts[0].source_title
                     source.error = None

@@ -17,6 +17,20 @@ def test_add_invalid_source(client: TestClient) -> None:
     assert response.status_code == 400
 
 
+def test_add_invite_source_without_telegram_login(client: TestClient) -> None:
+    response = client.post("/api/sources", json={"username": "https://t.me/+AbCdEfGhIjKlMnOp"})
+    assert response.status_code == 400
+    assert "закрытый" in response.json()["detail"].lower() or "API" in response.json()["detail"]
+
+
+def test_telegram_user_status_without_credentials(client: TestClient) -> None:
+    response = client.get("/api/telegram-user")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["configured"] is False
+    assert body["authorized"] is False
+
+
 def test_fetch_and_stats(client: TestClient) -> None:
     fetch = client.post("/api/fetch")
     assert fetch.status_code == 200

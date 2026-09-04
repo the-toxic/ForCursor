@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.collector.public_preview import is_valid_username, normalize_username
+from app.collector.invite import parse_source_ref
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.models import Item, Source
@@ -18,8 +18,13 @@ from app.schemas import (
     SourceOut,
     SourceUpdate,
     StatsOut,
+    TelegramCredentialsIn,
+    TelegramSendCodeIn,
+    TelegramSignInIn,
+    TelegramUserStatusOut,
 )
-from app.settings_store import read_runtime_settings, write_runtime_settings
+from app.settings_store import read_runtime_settings, read_telegram_credentials, write_runtime_settings
+from app.telegram_user import telegram_user_service
 
 router = APIRouter(prefix="/api")
 
@@ -62,14 +67,62 @@ def list_sources(db: Session = Depends(get_db)) -> list[Source]:
 
 
 @router.post("/sources", response_model=SourceOut)
-def create_source(payload: SourceCreate, db: Session = Depends(get_db)) -> Source:
-    username = normalize_username(payload.username)
-    if not is_valid_username(username):
-        raise HTTPException(status_code=400, detail="Некорректное имя канала")
-    existing = db.scalar(select(Source).where(Source.username == username))
+async def create_source(
+    payload: SourceCreate,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> Source:
+    parsed = parse_source_ref(payload.username)
+    if parsed is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Укажите @username публичного канала или invite-ссылку t.me/+…",
+        )
+    existing = db.scalar(select(Source).where(Source.username == parsed.username))
     if existing:
         raise HTTPException(status_code=409, detail="Такой источник уже добавлен")
-    source = Source(username=username, enabled=True)
+    if parsed.invite_hash:
+        duplicate_invite = db.scalar(select(Source).where(Source.invite_hash == parsed.invite_hash))
+        if duplicate_invite:
+            raise HTTPException(status_code=409, detail="Такой источник уже добавлен")
+
+    if parsed.kind == "public":
+        source = Source(username=parsed.username, enabled=True, source_kind="public")
+        db.add(source)
+        db.commit()
+        db.refresh(source)
+        return source
+
+    api_id, api_hash = read_telegram_credentials(db, settings)
+    if not api_id or not api_hash:
+        raise HTTPException(
+            status_code=400,
+            detail="Чтобы добавить закрытый канал, укажите API ID и API Hash в блоке «Закрытые каналы».",
+        )
+    if not await telegram_user_service.is_authorized(api_id, api_hash, settings.telegram_session_path):
+        raise HTTPException(
+            status_code=400,
+            detail="Войдите в Telegram-аккаунт в блоке «Закрытые каналы», затем вставьте ссылку-приглашение.",
+        )
+    try:
+        title, _joined_username, peer_id = await telegram_user_service.join_invite(
+            api_id,
+            api_hash,
+            settings.telegram_session_path,
+            parsed.invite_hash or "",
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    source = Source(
+        username=parsed.username,
+        title=title,
+        enabled=True,
+        source_kind="private",
+        invite_hash=parsed.invite_hash,
+        invite_link=parsed.invite_link,
+        telegram_peer_id=str(peer_id),
+    )
     db.add(source)
     db.commit()
     db.refresh(source)
@@ -122,6 +175,100 @@ def patch_settings(
 ) -> SettingsOut:
     write_runtime_settings(db, payload.model_dump(exclude_none=True))
     return SettingsOut(**read_runtime_settings(db, settings))
+
+
+@router.get("/telegram-user", response_model=TelegramUserStatusOut)
+async def telegram_user_status(
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> TelegramUserStatusOut:
+    api_id, api_hash = read_telegram_credentials(db, settings)
+    payload = await telegram_user_service.status(api_id, api_hash, settings.telegram_session_path)
+    return TelegramUserStatusOut(**payload)
+
+
+@router.post("/telegram-user/credentials", response_model=TelegramUserStatusOut)
+async def save_telegram_credentials(
+    payload: TelegramCredentialsIn,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> TelegramUserStatusOut:
+    write_runtime_settings(
+        db,
+        {"telegram_api_id": payload.api_id, "telegram_api_hash": payload.api_hash.strip()},
+    )
+    status = await telegram_user_service.status(
+        payload.api_id,
+        payload.api_hash.strip(),
+        settings.telegram_session_path,
+    )
+    return TelegramUserStatusOut(**status)
+
+
+@router.post("/telegram-user/send-code")
+async def send_telegram_code(
+    payload: TelegramSendCodeIn,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    if payload.api_id and payload.api_hash:
+        write_runtime_settings(
+            db,
+            {"telegram_api_id": payload.api_id, "telegram_api_hash": payload.api_hash.strip()},
+        )
+    api_id, api_hash = read_telegram_credentials(db, settings)
+    if not api_id or not api_hash:
+        raise HTTPException(
+            status_code=400,
+            detail="Сначала укажите API ID и API Hash с my.telegram.org.",
+        )
+    try:
+        return await telegram_user_service.send_code(
+            api_id,
+            api_hash,
+            settings.telegram_session_path,
+            payload.phone,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/telegram-user/sign-in", response_model=TelegramUserStatusOut)
+async def sign_in_telegram(
+    payload: TelegramSignInIn,
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> TelegramUserStatusOut:
+    api_id, api_hash = read_telegram_credentials(db, settings)
+    if not api_id or not api_hash:
+        raise HTTPException(
+            status_code=400,
+            detail="Сначала укажите API ID и API Hash с my.telegram.org.",
+        )
+    try:
+        await telegram_user_service.sign_in(
+            api_id,
+            api_hash,
+            settings.telegram_session_path,
+            payload.phone,
+            payload.code,
+            payload.password,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    status = await telegram_user_service.status(api_id, api_hash, settings.telegram_session_path)
+    return TelegramUserStatusOut(**status)
+
+
+@router.post("/telegram-user/logout", response_model=TelegramUserStatusOut)
+async def logout_telegram(
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> TelegramUserStatusOut:
+    await telegram_user_service.logout()
+    api_id, api_hash = read_telegram_credentials(db, settings)
+    status = await telegram_user_service.status(api_id, api_hash, settings.telegram_session_path)
+    return TelegramUserStatusOut(**status)
 
 
 @router.post("/fetch", response_model=FetchResult)

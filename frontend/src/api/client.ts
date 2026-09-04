@@ -5,6 +5,8 @@ export interface Source {
   username: string;
   title: string | null;
   enabled: boolean;
+  source_kind: "public" | "private" | string;
+  invite_link: string | null;
   last_post_id: number | null;
   last_fetched_at: string | null;
   error: string | null;
@@ -52,6 +54,28 @@ export interface FetchResult {
   errors: string[];
 }
 
+export interface TelegramUserStatus {
+  configured: boolean;
+  authorized: boolean;
+  code_sent: boolean;
+  user_id: number | null;
+  first_name: string | null;
+  username: string | null;
+  phone: string | null;
+  error: string | null;
+}
+
+function errorMessage(payload: { detail?: unknown }, status: number): string {
+  const detail = payload.detail;
+  if (typeof detail === "string" && detail.trim()) {
+    return detail;
+  }
+  if (Array.isArray(detail) && detail[0] && typeof detail[0] === "object" && "msg" in detail[0]) {
+    return String((detail[0] as { msg: string }).msg);
+  }
+  return `Ошибка запроса: ${status}`;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     headers: {
@@ -67,8 +91,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error("Нужен ключ доступа");
   }
   if (!response.ok) {
-    const payload = (await response.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(payload.detail || `Ошибка запроса: ${response.status}`);
+    const payload = (await response.json().catch(() => ({}))) as { detail?: unknown };
+    throw new Error(errorMessage(payload, response.status));
   }
   return (await response.json()) as T;
 }
@@ -98,4 +122,28 @@ export const api = {
     }),
   fetchNow: () => request<FetchResult>("/api/fetch", { method: "POST" }),
   resetDemo: () => request<FetchResult>("/api/demo/reset", { method: "POST" }),
+  telegramUser: () => request<TelegramUserStatus>("/api/telegram-user"),
+  saveTelegramCredentials: (apiId: number, apiHash: string) =>
+    request<TelegramUserStatus>("/api/telegram-user/credentials", {
+      method: "POST",
+      body: JSON.stringify({ api_id: apiId, api_hash: apiHash }),
+    }),
+  sendTelegramCode: (phone: string, apiId?: number, apiHash?: string) =>
+    request<{ ok: boolean; phone: string }>("/api/telegram-user/send-code", {
+      method: "POST",
+      body: JSON.stringify({
+        phone,
+        ...(apiId && apiHash ? { api_id: apiId, api_hash: apiHash } : {}),
+      }),
+    }),
+  signInTelegram: (phone: string, code: string, password?: string) =>
+    request<TelegramUserStatus>("/api/telegram-user/sign-in", {
+      method: "POST",
+      body: JSON.stringify({
+        phone,
+        code,
+        ...(password ? { password } : {}),
+      }),
+    }),
+  logoutTelegram: () => request<TelegramUserStatus>("/api/telegram-user/logout", { method: "POST" }),
 };

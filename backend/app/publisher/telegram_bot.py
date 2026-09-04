@@ -87,57 +87,20 @@ class TelegramPublisher:
             return [post.photo_url]
         return []
 
-    async def _send_media_group(self, client: httpx.AsyncClient, post: CollectedPost, text: str) -> str | None:
-        photos = self._photo_urls(post)
-        if post.video_url:
-            return None
-        if len(photos) < 2:
-            return None
+    def _photo_bytes(self, post: CollectedPost) -> list[bytes]:
+        if post.photo_bytes_list:
+            return list(post.photo_bytes_list)
+        if post.photo_bytes:
+            return [post.photo_bytes]
+        return []
 
-        files: dict[str, tuple[str, bytes, str]] = {}
-        media: list[dict[str, object]] = []
-        caption = text if len(text) <= 1024 else ""
-        for index, url in enumerate(photos[:10]):
-            downloaded = await self._download(client, url, timeout=20.0)
-            if downloaded is None:
-                continue
-            content, content_type = downloaded
-            if not content_type.startswith("image/"):
-                continue
-            attach = f"photo{index}"
-            files[attach] = (f"{attach}.jpg", content, content_type)
-            item: dict[str, object] = {"type": "photo", "media": f"attach://{attach}"}
-            if not media and caption:
-                item["caption"] = caption
-                item["parse_mode"] = "HTML"
-            media.append(item)
-
-        if len(media) < 2:
-            return None
-        try:
-            data = await self._telegram_json(
-                client,
-                "sendMediaGroup",
-                data={"chat_id": self.target_channel, "media": json.dumps(media)},
-                files=files,
-            )
-            result = data.get("result") or []
-            message_id = str(result[0]["message_id"]) if result else None
-        except Exception:
-            return None
-        if message_id and not caption:
-            await self._send_html_message(client, text)
-        return message_id
-
-    async def _send_photo(self, client: httpx.AsyncClient, post: CollectedPost, text: str) -> str | None:
-        if not post.photo_url or post.video_url:
-            return None
-        downloaded = await self._download(client, post.photo_url, timeout=15.0)
-        if downloaded is None:
-            return None
-        content, content_type = downloaded
-        if not content_type.startswith("image/"):
-            return None
+    async def _send_photo_content(
+        self,
+        client: httpx.AsyncClient,
+        content: bytes,
+        content_type: str,
+        text: str,
+    ) -> str | None:
         caption = text if len(text) <= 1024 else ""
         try:
             data = await self._telegram_json(
@@ -158,19 +121,15 @@ class TelegramPublisher:
             await self._send_html_message(client, text)
         return message_id
 
-    async def _send_video(self, client: httpx.AsyncClient, post: CollectedPost, text: str) -> str | None:
-        if not post.video_url:
-            return None
-        downloaded = await self._download(client, post.video_url, timeout=90.0)
-        if downloaded is None:
-            return None
-        content, content_type = downloaded
+    async def _send_video_content(
+        self,
+        client: httpx.AsyncClient,
+        content: bytes,
+        content_type: str,
+        text: str,
+    ) -> str | None:
         if len(content) > MAX_VIDEO_BYTES:
             return None
-        if content_type and not content_type.startswith(("video/", "application/octet-stream")):
-            if not post.video_url.endswith(".mp4"):
-                return None
-            content_type = "video/mp4"
         caption = text if len(text) <= 1024 else ""
         try:
             data = await self._telegram_json(
@@ -193,6 +152,99 @@ class TelegramPublisher:
         await self._send_html_message(client, text)
         return message_id
 
+    async def _send_media_group_contents(
+        self,
+        client: httpx.AsyncClient,
+        photos: list[tuple[bytes, str]],
+        text: str,
+    ) -> str | None:
+        if len(photos) < 2:
+            return None
+        files: dict[str, tuple[str, bytes, str]] = {}
+        media: list[dict[str, object]] = []
+        caption = text if len(text) <= 1024 else ""
+        for index, (content, content_type) in enumerate(photos[:10]):
+            attach = f"photo{index}"
+            files[attach] = (f"{attach}.jpg", content, content_type)
+            item: dict[str, object] = {"type": "photo", "media": f"attach://{attach}"}
+            if not media and caption:
+                item["caption"] = caption
+                item["parse_mode"] = "HTML"
+            media.append(item)
+        if len(media) < 2:
+            return None
+        try:
+            data = await self._telegram_json(
+                client,
+                "sendMediaGroup",
+                data={"chat_id": self.target_channel, "media": json.dumps(media)},
+                files=files,
+            )
+            result = data.get("result") or []
+            message_id = str(result[0]["message_id"]) if result else None
+        except Exception:
+            return None
+        if message_id and not caption:
+            await self._send_html_message(client, text)
+        return message_id
+
+    async def _send_local_media(self, client: httpx.AsyncClient, post: CollectedPost, text: str) -> str | None:
+        if post.video_bytes:
+            message_id = await self._send_video_content(client, post.video_bytes, "video/mp4", text)
+            if message_id:
+                return message_id
+        photos = [(item, "image/jpeg") for item in self._photo_bytes(post)]
+        if len(photos) >= 2:
+            message_id = await self._send_media_group_contents(client, photos, text)
+            if message_id:
+                return message_id
+        if photos:
+            return await self._send_photo_content(client, photos[0][0], photos[0][1], text)
+        return None
+
+    async def _send_media_group(self, client: httpx.AsyncClient, post: CollectedPost, text: str) -> str | None:
+        photos = self._photo_urls(post)
+        if post.video_url or post.video_bytes:
+            return None
+        if len(photos) < 2:
+            return None
+        downloaded_photos: list[tuple[bytes, str]] = []
+        for url in photos[:10]:
+            downloaded = await self._download(client, url, timeout=20.0)
+            if downloaded is None:
+                continue
+            content, content_type = downloaded
+            if not content_type.startswith("image/"):
+                continue
+            downloaded_photos.append((content, content_type))
+        return await self._send_media_group_contents(client, downloaded_photos, text)
+
+    async def _send_photo(self, client: httpx.AsyncClient, post: CollectedPost, text: str) -> str | None:
+        if not post.photo_url or post.video_url or post.video_bytes:
+            return None
+        downloaded = await self._download(client, post.photo_url, timeout=15.0)
+        if downloaded is None:
+            return None
+        content, content_type = downloaded
+        if not content_type.startswith("image/"):
+            return None
+        return await self._send_photo_content(client, content, content_type, text)
+
+    async def _send_video(self, client: httpx.AsyncClient, post: CollectedPost, text: str) -> str | None:
+        if not post.video_url:
+            return None
+        downloaded = await self._download(client, post.video_url, timeout=90.0)
+        if downloaded is None:
+            return None
+        content, content_type = downloaded
+        if len(content) > MAX_VIDEO_BYTES:
+            return None
+        if content_type and not content_type.startswith(("video/", "application/octet-stream")):
+            if not post.video_url.endswith(".mp4"):
+                return None
+            content_type = "video/mp4"
+        return await self._send_video_content(client, content, content_type, text)
+
     async def publish(self, post: CollectedPost) -> PublishResult:
         text = format_post(post)
         if self.dry_run or not self.is_configured:
@@ -200,7 +252,9 @@ class TelegramPublisher:
 
         try:
             async with httpx.AsyncClient(timeout=90.0) as client:
-                message_id = await self._send_video(client, post, text)
+                message_id = await self._send_local_media(client, post, text)
+                if message_id is None:
+                    message_id = await self._send_video(client, post, text)
                 if message_id is None:
                     message_id = await self._send_media_group(client, post, text)
                 if message_id is None:

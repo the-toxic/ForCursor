@@ -34,6 +34,7 @@ def settings(tmp_path: Path) -> Settings:
         min_text_length=40,
         poll_interval_seconds=90,
         auth_key="toxic",
+        telegram_session_path=str(tmp_path / "telegram_user"),
     )
 
 

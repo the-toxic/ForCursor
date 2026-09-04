@@ -1,7 +1,7 @@
 from collections.abc import Generator
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import get_settings
@@ -24,8 +24,29 @@ engine = create_engine(settings.database_url, connect_args=connect_args, future=
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
 
+def migrate_db() -> None:
+    inspector = inspect(engine)
+    if "sources" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("sources")}
+    statements: list[str] = []
+    if "source_kind" not in columns:
+        statements.append("ALTER TABLE sources ADD COLUMN source_kind VARCHAR(16) DEFAULT 'public'")
+    if "invite_hash" not in columns:
+        statements.append("ALTER TABLE sources ADD COLUMN invite_hash VARCHAR(128)")
+    if "invite_link" not in columns:
+        statements.append("ALTER TABLE sources ADD COLUMN invite_link VARCHAR(512)")
+    if "telegram_peer_id" not in columns:
+        statements.append("ALTER TABLE sources ADD COLUMN telegram_peer_id VARCHAR(64)")
+    with engine.begin() as connection:
+        for statement in statements:
+            connection.execute(text(statement))
+        connection.execute(text("UPDATE sources SET source_kind = 'public' WHERE source_kind IS NULL"))
+
+
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    migrate_db()
 
 
 def get_db() -> Generator[Session, None, None]:
