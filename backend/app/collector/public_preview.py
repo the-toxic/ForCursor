@@ -44,13 +44,20 @@ def _absolute_url(value: str | None) -> str | None:
     return None
 
 
-def _photo_from_message(message: Tag) -> str | None:
-    photo = message.select_one(".tgme_widget_message_photo_wrap")
-    if not photo:
-        return None
-    style = photo.get("style") or ""
-    match = BACKGROUND_IMAGE_RE.search(style)
-    return _absolute_url(match.group(1) if match else None)
+def _photos_from_message(message: Tag) -> list[str]:
+    urls: list[str] = []
+    seen: set[str] = set()
+    for photo in message.select(".tgme_widget_message_photo_wrap"):
+        style = photo.get("style") or ""
+        match = BACKGROUND_IMAGE_RE.search(style)
+        url = _absolute_url(match.group(1) if match else None)
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        urls.append(url)
+        if len(urls) >= 10:
+            break
+    return urls
 
 
 def _video_from_message(message: Tag) -> str | None:
@@ -82,6 +89,7 @@ def parse_preview_html(html: str, username: str) -> list[CollectedPost]:
         time_tag = message.select_one("time")
         posted_at = _parse_datetime(time_tag.get("datetime") if time_tag else None)
         source_url = urljoin("https://t.me/", data_post)
+        photos = _photos_from_message(message)
 
         posts.append(
             CollectedPost(
@@ -91,7 +99,8 @@ def parse_preview_html(html: str, username: str) -> list[CollectedPost]:
                 post_id=int(raw_id),
                 text=text,
                 html_text=html_text,
-                photo_url=_photo_from_message(message),
+                photo_url=photos[0] if photos else None,
+                photo_urls=tuple(photos),
                 video_url=_video_from_message(message),
                 source_url=source_url,
                 posted_at=posted_at,

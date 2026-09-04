@@ -13,8 +13,13 @@ def test_normalize_and_validate_username() -> None:
 def test_parse_preview_html_extracts_posts() -> None:
     html = Path(__file__).parent.joinpath("fixtures/tme_sample.html").read_text(encoding="utf-8")
     posts = parse_preview_html(html, "demo_news")
-    assert [post.post_id for post in posts] == [10, 11]
+    assert [post.post_id for post in posts] == [10, 11, 12]
     assert posts[0].text == "Первая новость про ставку ЦБ"
     assert posts[1].photo_url == "https://cdn.example/photo.jpg"
+    assert posts[2].photo_urls == (
+        "https://cdn.example/a.jpg",
+        "https://cdn.example/b.jpg",
+        "https://cdn.example/c.jpg",
+    )
     assert posts[0].source_title == "Новости Демо"
     assert posts[1].source_url == "https://t.me/demo_news/11"

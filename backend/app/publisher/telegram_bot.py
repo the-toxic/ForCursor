@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import json
 from dataclasses import dataclass
 
 import httpx
@@ -79,6 +80,55 @@ class TelegramPublisher:
         content_type = response.headers.get("content-type", "").split(";")[0]
         return response.content, content_type
 
+    def _photo_urls(self, post: CollectedPost) -> list[str]:
+        if post.photo_urls:
+            return list(post.photo_urls)
+        if post.photo_url:
+            return [post.photo_url]
+        return []
+
+    async def _send_media_group(self, client: httpx.AsyncClient, post: CollectedPost, text: str) -> str | None:
+        photos = self._photo_urls(post)
+        if post.video_url:
+            return None
+        if len(photos) < 2:
+            return None
+
+        files: dict[str, tuple[str, bytes, str]] = {}
+        media: list[dict[str, object]] = []
+        caption = text if len(text) <= 1024 else ""
+        for index, url in enumerate(photos[:10]):
+            downloaded = await self._download(client, url, timeout=20.0)
+            if downloaded is None:
+                continue
+            content, content_type = downloaded
+            if not content_type.startswith("image/"):
+                continue
+            attach = f"photo{index}"
+            files[attach] = (f"{attach}.jpg", content, content_type)
+            item: dict[str, object] = {"type": "photo", "media": f"attach://{attach}"}
+            if not media and caption:
+                item["caption"] = caption
+                item["parse_mode"] = "HTML"
+            media.append(item)
+
+        if len(media) < 2:
+            return None
+        try:
+            data = await self._telegram_json(
+                client,
+                "sendMediaGroup",
+                data={"chat_id": self.target_channel, "media": json.dumps(media)},
+                files=files,
+            )
+            result = data.get("result") or []
+            message_id = str(result[0]["message_id"]) if result else None
+        except Exception:
+            return None
+        if message_id and not caption:
+            await self._send_html_message(client, text)
+        return message_id
+
     async def _send_photo(self, client: httpx.AsyncClient, post: CollectedPost, text: str) -> str | None:
         if not post.photo_url or post.video_url:
             return None
@@ -151,6 +201,8 @@ class TelegramPublisher:
         try:
             async with httpx.AsyncClient(timeout=90.0) as client:
                 message_id = await self._send_video(client, post, text)
+                if message_id is None:
+                    message_id = await self._send_media_group(client, post, text)
                 if message_id is None:
                     message_id = await self._send_photo(client, post, text)
                 if message_id is None:

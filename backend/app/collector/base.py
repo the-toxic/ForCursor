@@ -16,3 +16,4 @@ class CollectedPost:
     posted_at: datetime | None
     html_text: str = ""
     video_url: str | None = None
+    photo_urls: tuple[str, ...] = ()
