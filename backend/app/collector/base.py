@@ -14,3 +14,5 @@ class CollectedPost:
     photo_url: str | None
     source_url: str
     posted_at: datetime | None
+    html_text: str = ""
+    video_url: str | None = None

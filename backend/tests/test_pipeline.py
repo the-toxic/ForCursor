@@ -31,5 +31,7 @@ async def test_pipeline_publishes_unique_and_skips_duplicates(
 def test_format_post_adds_source() -> None:
     text = format_post(DEMO_POSTS[0])
     assert "ключевую ставку" in text
-    assert "Источник: Демо Альфа" in text
+    assert "Демо Альфа" in text
     assert "https://t.me/demo_alpha/101" in text
+    assert "Источник:" not in text
+    assert "disable_web_page_preview" not in text

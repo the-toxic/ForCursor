@@ -8,6 +8,7 @@ import httpx
 from bs4 import BeautifulSoup, Tag
 
 from app.collector.base import CollectedPost
+from app.collector.html_text import html_to_plain, telegram_html_from_message
 
 PREVIEW_URL = "https://t.me/s/{username}"
 CHANNEL_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{2,31}$")
@@ -33,13 +34,32 @@ def _parse_datetime(value: str | None) -> datetime | None:
         return None
 
 
+def _absolute_url(value: str | None) -> str | None:
+    if not value:
+        return None
+    if value.startswith("//"):
+        return "https:" + value
+    if value.startswith("http://") or value.startswith("https://"):
+        return value
+    return None
+
+
 def _photo_from_message(message: Tag) -> str | None:
     photo = message.select_one(".tgme_widget_message_photo_wrap")
     if not photo:
         return None
     style = photo.get("style") or ""
     match = BACKGROUND_IMAGE_RE.search(style)
-    return match.group(1) if match else None
+    return _absolute_url(match.group(1) if match else None)
+
+
+def _video_from_message(message: Tag) -> str | None:
+    video = message.select_one("video.tgme_widget_message_video") or message.select_one(
+        ".tgme_widget_message_video_wrap video"
+    )
+    if not video:
+        return None
+    return _absolute_url(video.get("src"))
 
 
 def parse_preview_html(html: str, username: str) -> list[CollectedPost]:
@@ -57,7 +77,8 @@ def parse_preview_html(html: str, username: str) -> list[CollectedPost]:
             continue
 
         text_tag = message.select_one(".tgme_widget_message_text")
-        text = text_tag.get_text("\n", strip=True) if text_tag else ""
+        html_text = telegram_html_from_message(text_tag)
+        text = html_to_plain(html_text)
         time_tag = message.select_one("time")
         posted_at = _parse_datetime(time_tag.get("datetime") if time_tag else None)
         source_url = urljoin("https://t.me/", data_post)
@@ -69,7 +90,9 @@ def parse_preview_html(html: str, username: str) -> list[CollectedPost]:
                 external_id=data_post,
                 post_id=int(raw_id),
                 text=text,
+                html_text=html_text,
                 photo_url=_photo_from_message(message),
+                video_url=_video_from_message(message),
                 source_url=source_url,
                 posted_at=posted_at,
             )
