@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+import re
+from datetime import datetime
+from urllib.parse import urljoin
+
+import httpx
+from bs4 import BeautifulSoup, Tag
+
+from app.collector.base import CollectedPost
+
+PREVIEW_URL = "https://t.me/s/{username}"
+CHANNEL_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{2,31}$")
+BACKGROUND_IMAGE_RE = re.compile(r"url\(['\"]?(.*?)['\"]?\)")
+
+
+def normalize_username(value: str) -> str:
+    username = value.strip()
+    username = re.sub(r"^https?://t\.me/(s/)?", "", username, flags=re.IGNORECASE)
+    return username.lstrip("@")
+
+
+def is_valid_username(value: str) -> bool:
+    return bool(CHANNEL_RE.fullmatch(normalize_username(value)))
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
+def _photo_from_message(message: Tag) -> str | None:
+    photo = message.select_one(".tgme_widget_message_photo_wrap")
+    if not photo:
+        return None
+    style = photo.get("style") or ""
+    match = BACKGROUND_IMAGE_RE.search(style)
+    return match.group(1) if match else None
+
+
+def parse_preview_html(html: str, username: str) -> list[CollectedPost]:
+    soup = BeautifulSoup(html, "lxml")
+    title_tag = soup.select_one(".tgme_channel_info_header_title")
+    title = title_tag.get_text(strip=True) if title_tag else username
+
+    posts: list[CollectedPost] = []
+    for message in soup.select(".tgme_widget_message"):
+        data_post = message.get("data-post")
+        if not data_post or "/" not in data_post:
+            continue
+        channel, raw_id = data_post.split("/", maxsplit=1)
+        if not raw_id.isdigit():
+            continue
+
+        text_tag = message.select_one(".tgme_widget_message_text")
+        text = text_tag.get_text("\n", strip=True) if text_tag else ""
+        time_tag = message.select_one("time")
+        posted_at = _parse_datetime(time_tag.get("datetime") if time_tag else None)
+        source_url = urljoin("https://t.me/", data_post)
+
+        posts.append(
+            CollectedPost(
+                source_username=channel,
+                source_title=title,
+                external_id=data_post,
+                post_id=int(raw_id),
+                text=text,
+                photo_url=_photo_from_message(message),
+                source_url=source_url,
+                posted_at=posted_at,
+            )
+        )
+
+    posts.sort(key=lambda item: item.post_id)
+    return posts
+
+
+class PublicPreviewCollector:
+    def __init__(self, timeout: float = 20.0) -> None:
+        self.timeout = timeout
+
+    async def fetch(self, username: str) -> list[CollectedPost]:
+        clean = normalize_username(username)
+        if not is_valid_username(clean):
+            raise ValueError(f"Некорректное имя канала: {username}")
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (compatible; NewsAggregator/1.0; +https://t.me/)"
+            ),
+            "Accept-Language": "ru,en;q=0.8",
+        }
+        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
+            response = await client.get(PREVIEW_URL.format(username=clean), headers=headers)
+            response.raise_for_status()
+        return parse_preview_html(response.text, clean)

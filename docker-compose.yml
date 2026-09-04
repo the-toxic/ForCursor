@@ -1,0 +1,21 @@
+services:
+  api:
+    build: ./backend
+    environment:
+      APP_MODE: demo
+      DATABASE_URL: sqlite:////app/data/aggregator.db
+      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173,http://localhost
+    volumes:
+      - aggregator-data:/app/data
+    ports:
+      - "8000:8000"
+
+  web:
+    build: ./frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+volumes:
+  aggregator-data:
