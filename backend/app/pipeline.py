@@ -12,6 +12,7 @@ from app.collector.public_preview import PublicPreviewCollector, is_valid_userna
 from app.config import Settings
 from app.dedup.engine import Candidate, decide
 from app.dedup.normalize import normalize_text, text_hash
+from app.errors import sanitize_error
 from app.models import Item, Source
 from app.publisher.telegram_bot import TelegramPublisher
 from app.schemas import FetchResult
@@ -62,7 +63,7 @@ class NewsPipeline:
     def _recent_candidates(self, db: Session) -> list[Candidate]:
         rows = (
             db.query(Item)
-            .filter(Item.status.in_(("published", "duplicate")))
+            .filter(Item.status == "published")
             .order_by(Item.id.desc())
             .limit(self.settings.dedup_window)
             .all()
@@ -71,6 +72,28 @@ class NewsPipeline:
             Candidate(item_id=row.id, content_hash=row.content_hash, raw_text=row.raw_text)
             for row in reversed(rows)
         ]
+
+    async def reclassify_duplicates(self, db: Session, threshold: float) -> int:
+        published_rows = db.query(Item).filter(Item.status == "published").order_by(Item.id.asc()).all()
+        duplicate_rows = db.query(Item).filter(Item.status == "duplicate").order_by(Item.id.asc()).all()
+        recent = [
+            Candidate(item_id=row.id, content_hash=row.content_hash, raw_text=row.raw_text)
+            for row in published_rows
+        ]
+        promoted = 0
+        for item in duplicate_rows:
+            decision = decide(item.raw_text, recent, threshold)
+            item.similarity = decision.similarity
+            item.matched_item_id = decision.matched_item_id
+            if decision.is_duplicate:
+                continue
+            item.status = "published"
+            recent.append(
+                Candidate(item_id=item.id, content_hash=item.content_hash, raw_text=item.raw_text)
+            )
+            promoted += 1
+        db.commit()
+        return promoted
 
     async def process_post(
         self,
@@ -129,7 +152,7 @@ class NewsPipeline:
         db.add(item)
         db.commit()
         db.refresh(item)
-        if status in {"published", "duplicate"}:
+        if status == "published":
             recent.append(
                 Candidate(item_id=item.id, content_hash=item.content_hash, raw_text=item.raw_text)
             )
@@ -143,6 +166,7 @@ class NewsPipeline:
             target_channel = str(runtime["target_channel"])
             publisher = self._publisher(target_channel)
             collector = self._collector()
+            await self.reclassify_duplicates(db, threshold)
             recent = self._recent_candidates(db)
 
             counts = {"fetched": 0, "published": 0, "duplicates": 0, "skipped": 0}
@@ -160,15 +184,19 @@ class NewsPipeline:
                         if source.last_post_id is not None and post.post_id <= source.last_post_id:
                             continue
                         counts["fetched"] += 1
-                        status = await self.process_post(
-                            db,
-                            post,
-                            source,
-                            threshold,
-                            min_text_length,
-                            publisher,
-                            recent,
-                        )
+                        try:
+                            status = await self.process_post(
+                                db,
+                                post,
+                                source,
+                                threshold,
+                                min_text_length,
+                                publisher,
+                                recent,
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            errors.append(f"{source.username}: {sanitize_error(str(exc))}")
+                            continue
                         count_key = {
                             "published": "published",
                             "duplicate": "duplicates",
@@ -179,9 +207,9 @@ class NewsPipeline:
                         source.last_post_id = max(source.last_post_id or 0, post.post_id)
                     db.commit()
                 except Exception as exc:  # noqa: BLE001 - ошибки источника не роняют весь проход
-                    source.error = str(exc)
+                    source.error = sanitize_error(str(exc))
                     db.commit()
-                    errors.append(f"{source.username}: {exc}")
+                    errors.append(f"{source.username}: {source.error}")
 
             self.last_fetch_at = datetime.now(UTC).replace(tzinfo=None)
             return FetchResult(errors=errors, **counts)

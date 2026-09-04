@@ -20,7 +20,7 @@ async def test_pipeline_publishes_unique_and_skips_duplicates(
 
     assert first.fetched >= 6
     assert first.published >= 4
-    assert first.duplicates >= 2
+    assert first.duplicates >= 1
     assert first.skipped >= 1
     assert second.fetched == 0
 

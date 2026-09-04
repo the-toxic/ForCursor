@@ -22,7 +22,7 @@ def test_fetch_and_stats(client: TestClient) -> None:
     assert fetch.status_code == 200
     body = fetch.json()
     assert body["published"] >= 4
-    assert body["duplicates"] >= 2
+    assert body["duplicates"] >= 1
 
     stats = client.get("/api/stats").json()
     assert stats["published"] == body["published"]

@@ -24,11 +24,13 @@ export const useAggregatorStore = defineStore("aggregator", () => {
 
   const isDemo = computed(() => settings.value?.app_mode === "demo");
   const uniqueShare = computed(() => {
-    const total = stats.value?.items_total ?? 0;
-    if (!total) {
+    const published = stats.value?.published ?? 0;
+    const duplicates = stats.value?.duplicates ?? 0;
+    const newsTotal = published + duplicates;
+    if (!newsTotal) {
       return 0;
     }
-    return Math.round(((stats.value?.published ?? 0) / total) * 100);
+    return Math.round((published / newsTotal) * 100);
   });
 
   async function refresh() {

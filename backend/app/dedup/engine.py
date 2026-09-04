@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from rapidfuzz import fuzz
 
-from app.dedup.normalize import normalize_text, significant_tokens, text_hash
+from app.dedup.normalize import significant_tokens, text_hash
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,28 +46,28 @@ def _jaccard(left: list[str], right: list[str]) -> float:
 
 
 def score_pair(left_text: str, right_text: str) -> float:
-    left_norm = normalize_text(left_text)
-    right_norm = normalize_text(right_text)
+    """Same story, not the same newsroom wording.
+
+    Different topics share journalistic filler and must stay low. True
+    paraphrases land roughly in 0.60–0.80, so a 90% threshold keeps them unique.
+    """
     left_tokens = significant_tokens(left_text)
     right_tokens = significant_tokens(right_text)
-    left_sig = " ".join(left_tokens)
-    right_sig = " ".join(right_tokens)
+    if not left_tokens or not right_tokens:
+        return 0.0
 
-    token_set = fuzz.token_set_ratio(left_norm, right_norm) / 100
-    token_sort = fuzz.token_sort_ratio(left_norm, right_norm) / 100
-    weighted = fuzz.WRatio(left_norm, right_norm) / 100
-    stemmed_set = fuzz.token_set_ratio(left_sig, right_sig) / 100 if left_sig and right_sig else 0.0
-    cosine_score = _cosine(left_tokens, right_tokens)
-    jaccard_score = _jaccard(left_tokens, right_tokens)
+    left_set = set(left_tokens)
+    right_set = set(right_tokens)
+    shared = left_set & right_set
+    containment = len(shared) / min(len(left_set), len(right_set))
+    stemmed_set = fuzz.token_set_ratio(" ".join(left_tokens), " ".join(right_tokens)) / 100
+    score = 0.55 * containment + 0.45 * stemmed_set
 
-    left_numbers = {token for token in left_norm.split() if token.isdigit()}
-    right_numbers = {token for token in right_norm.split() if token.isdigit()}
-    number_bonus = 0.1 if left_numbers and left_numbers == right_numbers else 0.0
+    # A handful of shared stems is normal for unrelated Russian news copy.
+    if len(shared) < 4:
+        score = min(score, 0.49)
 
-    return min(
-        1.0,
-        max(token_set, token_sort, weighted, stemmed_set, cosine_score, jaccard_score) + number_bonus,
-    )
+    return round(min(1.0, score), 4)
 
 
 def decide(text: str, recent: list[Candidate], threshold: float) -> DedupDecision:
