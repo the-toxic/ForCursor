@@ -91,9 +91,20 @@ pytest -q
 
 ## Docker
 
+Локально:
+
 ```bash
 docker compose up --build
 ```
 
 API: `http://localhost:8000/api/health`  
 Админка: `http://localhost:5173`
+
+На VPS (боевой режим):
+
+```bash
+cp .env.example .env   # заполните BOT_TOKEN и TARGET_CHANNEL
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+Админка слушает порт 80, API — 8000. Бот должен быть администратором канала назначения с правом писать сообщения. Источники добавляются в админке.
