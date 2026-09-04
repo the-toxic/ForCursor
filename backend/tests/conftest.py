@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.api import routes
+from app.auth import AccessKeyMiddleware
 from app.config import Settings, get_settings
 from app.db import get_db
 from app.models import Base
@@ -32,6 +33,7 @@ def settings(tmp_path: Path) -> Settings:
         similarity_threshold=0.82,
         min_text_length=40,
         poll_interval_seconds=90,
+        auth_key="toxic",
     )
 
 
@@ -57,6 +59,8 @@ def pipeline(settings: Settings) -> NewsPipeline:
 def client(settings: Settings, db_session: Session, pipeline: NewsPipeline) -> Generator[TestClient, None, None]:
     seed_demo_sources(db_session)
     app = FastAPI()
+    app.state.auth_key = settings.auth_key
+    app.add_middleware(AccessKeyMiddleware)
     app.include_router(routes.router)
     app.state.pipeline = pipeline
 
@@ -67,5 +71,5 @@ def client(settings: Settings, db_session: Session, pipeline: NewsPipeline) -> G
     app.dependency_overrides[get_settings] = lambda: settings
     app.dependency_overrides[routes.get_pipeline] = lambda: pipeline
 
-    with TestClient(app) as test_client:
+    with TestClient(app, headers={"X-Auth-Key": settings.auth_key}) as test_client:
         yield test_client

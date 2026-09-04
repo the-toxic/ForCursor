@@ -1,3 +1,5 @@
+import { clearSession, readStoredSession } from "../auth";
+
 export interface Source {
   id: number;
   username: string;
@@ -54,10 +56,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     headers: {
       "Content-Type": "application/json",
+      "X-Auth-Key": readStoredSession(),
       ...(init?.headers ?? {}),
     },
     ...init,
   });
+  if (response.status === 401) {
+    clearSession();
+    window.dispatchEvent(new Event("uniq-news-unauthorized"));
+    throw new Error("Нужен ключ доступа");
+  }
   if (!response.ok) {
     const payload = (await response.json().catch(() => ({}))) as { detail?: string };
     throw new Error(payload.detail || `Ошибка запроса: ${response.status}`);

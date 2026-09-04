@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import routes
+from app.auth import AccessKeyMiddleware
 from app.config import get_settings
 from app.db import SessionLocal, init_db
 from app.pipeline import NewsPipeline, seed_demo_sources, seed_env_sources
@@ -66,6 +67,8 @@ def create_app() -> FastAPI:
         description="Сбор публичных каналов, дедупликация и публикация уникальных новостей.",
         lifespan=lifespan,
     )
+    application.state.auth_key = settings.auth_key
+    application.add_middleware(AccessKeyMiddleware)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,

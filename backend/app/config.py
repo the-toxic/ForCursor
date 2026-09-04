@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     dedup_window: int = 400
     database_url: str = "sqlite:///./data/aggregator.db"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    auth_key: str = "toxic"
 
     @property
     def is_demo(self) -> bool:

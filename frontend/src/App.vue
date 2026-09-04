@@ -1,18 +1,53 @@
 <script setup lang="ts">
-import { onMounted, watch } from "vue";
+import { onMounted, onUnmounted, ref, watch } from "vue";
 
+import { ACCESS_KEY, clearSession, hasAccess, saveSession } from "./auth";
 import { useAggregatorStore } from "./stores/aggregator";
 
 const store = useAggregatorStore();
+const isAuthed = ref(false);
+const accessKey = ref("");
+const loginError = ref("");
+
+function lockScreen() {
+  isAuthed.value = false;
+  accessKey.value = "";
+}
+
+function enterSite() {
+  loginError.value = "";
+  if (accessKey.value.trim() !== ACCESS_KEY) {
+    loginError.value = "Неверный ключ";
+    return;
+  }
+  saveSession(ACCESS_KEY);
+  isAuthed.value = true;
+  void store.refresh();
+}
+
+function logout() {
+  clearSession();
+  lockScreen();
+}
 
 onMounted(() => {
-  void store.refresh();
+  window.addEventListener("uniq-news-unauthorized", lockScreen);
+  if (hasAccess()) {
+    isAuthed.value = true;
+    void store.refresh();
+  }
+});
+
+onUnmounted(() => {
+  window.removeEventListener("uniq-news-unauthorized", lockScreen);
 });
 
 watch(
   () => store.statusFilter,
   () => {
-    void store.refresh();
+    if (isAuthed.value) {
+      void store.refresh();
+    }
   },
 );
 
@@ -45,7 +80,35 @@ function statusClass(status: string): string {
 </script>
 
 <template>
-  <div class="mx-auto min-h-screen max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+  <div
+    v-if="!isAuthed"
+    class="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4"
+  >
+    <form
+      class="rounded-3xl border border-white/10 bg-slate-950/50 p-6 sm:p-8"
+      @submit.prevent="enterSite"
+    >
+      <p class="text-sm font-medium uppercase tracking-[0.2em] text-amber-300/80">Telegram · дедуп</p>
+      <h1 class="mt-3 text-2xl font-semibold text-white">Вход</h1>
+      <p class="mt-2 text-sm text-slate-400">Введите ключ, чтобы открыть агрегатор.</p>
+      <input
+        v-model="accessKey"
+        type="password"
+        autocomplete="current-password"
+        placeholder="Ключ доступа"
+        class="mt-5 w-full rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-sm text-white outline-none focus:ring-2 focus:ring-amber-400/60"
+      />
+      <p v-if="loginError" class="mt-2 text-sm text-rose-300">{{ loginError }}</p>
+      <button
+        type="submit"
+        class="mt-5 w-full rounded-xl bg-amber-400 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-amber-300"
+      >
+        Войти
+      </button>
+    </form>
+  </div>
+
+  <div v-else class="mx-auto min-h-screen max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
     <header class="mb-8 flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
       <div>
         <p class="text-sm font-medium uppercase tracking-[0.2em] text-amber-300/80">Telegram · дедуп</p>
@@ -74,6 +137,13 @@ function statusClass(status: string): string {
           @click="store.resetDemo"
         >
           Пересобрать демо
+        </button>
+        <button
+          type="button"
+          class="rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-white/10"
+          @click="logout"
+        >
+          Выйти
         </button>
       </div>
     </header>
