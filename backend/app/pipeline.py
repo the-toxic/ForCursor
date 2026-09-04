@@ -73,7 +73,7 @@ class NewsPipeline:
             return await DemoCollector().fetch(source.username)
         if self._is_private(source):
             api_id, api_hash = read_telegram_credentials(db, self.settings)
-            posts, title, peer_id = await telegram_user_service.fetch_source(
+            posts, title, peer_id, access_hash = await telegram_user_service.fetch_source(
                 api_id,
                 api_hash,
                 self.settings.telegram_session_path,
@@ -82,6 +82,8 @@ class NewsPipeline:
             )
             source.title = title
             source.telegram_peer_id = str(peer_id)
+            if access_hash:
+                source.telegram_access_hash = access_hash
             return posts
         return await PublicPreviewCollector().fetch(source.username)
 
@@ -135,7 +137,15 @@ class NewsPipeline:
             return "seen"
 
         normalized = normalize_text(post.text)
-        if len(normalized) < min_text_length:
+        has_media = bool(
+            post.telegram_message_ids
+            or post.photo_url
+            or post.video_url
+            or post.photo_bytes
+            or post.video_bytes
+            or post.photo_urls
+        )
+        if len(normalized) < min_text_length and not has_media:
             item = Item(
                 source_id=source.id,
                 source_username=post.source_username,
@@ -156,6 +166,7 @@ class NewsPipeline:
         status = "duplicate" if decision.is_duplicate else "published"
         published_id = None
         if status == "published":
+            post = await self._hydrate_media(db, post)
             result = await publisher.publish(post)
             published_id = result.message_id
 
@@ -182,6 +193,17 @@ class NewsPipeline:
                 Candidate(item_id=item.id, content_hash=item.content_hash, raw_text=item.raw_text)
             )
         return status
+
+    async def _hydrate_media(self, db: Session, post: CollectedPost) -> CollectedPost:
+        if not post.telegram_message_ids:
+            return post
+        api_id, api_hash = read_telegram_credentials(db, self.settings)
+        return await telegram_user_service.hydrate_media(
+            api_id,
+            api_hash,
+            self.settings.telegram_session_path,
+            post,
+        )
 
     async def run_once(self, db: Session) -> FetchResult:
         async with self._lock:

@@ -19,6 +19,7 @@ class Source(Base):
     invite_hash: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     invite_link: Mapped[str | None] = mapped_column(String(512), nullable=True)
     telegram_peer_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    telegram_access_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_post_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_fetched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)

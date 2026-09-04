@@ -20,3 +20,6 @@ class CollectedPost:
     photo_bytes: bytes | None = None
     photo_bytes_list: tuple[bytes, ...] = ()
     video_bytes: bytes | None = None
+    telegram_peer_id: int | None = None
+    telegram_access_hash: int | None = None
+    telegram_message_ids: tuple[int, ...] = ()

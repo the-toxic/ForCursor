@@ -308,6 +308,16 @@ function sourceLabel(name: string): string {
             >my.telegram.org</a>,
             затем телефон и код.
           </p>
+          <p
+            v-if="store.telegramUser?.error"
+            class="mt-3 rounded-xl border border-rose-400/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-100"
+          >
+            {{ store.telegramUser.error }}
+          </p>
+          <p class="mt-3 text-xs leading-5 text-slate-500">
+            Если Telegram на телефоне показал «новый вход» с сервера — подтвердите, что это вы,
+            и не завершайте сессию. Иначе парсер потеряет доступ к закрытым каналам.
+          </p>
 
           <div v-if="store.telegramUser?.authorized" class="mt-4 rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-3 py-3">
             <p class="text-sm text-emerald-100">

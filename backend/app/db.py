@@ -38,6 +38,8 @@ def migrate_db() -> None:
         statements.append("ALTER TABLE sources ADD COLUMN invite_link VARCHAR(512)")
     if "telegram_peer_id" not in columns:
         statements.append("ALTER TABLE sources ADD COLUMN telegram_peer_id VARCHAR(64)")
+    if "telegram_access_hash" not in columns:
+        statements.append("ALTER TABLE sources ADD COLUMN telegram_access_hash VARCHAR(64)")
     with engine.begin() as connection:
         for statement in statements:
             connection.execute(text(statement))

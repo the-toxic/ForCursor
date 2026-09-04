@@ -1,5 +1,5 @@
 from app.collector.invite import extract_invite_hash, parse_source_ref
-from app.telegram_user import private_message_url
+from app.telegram_user import map_telegram_error, private_message_url
 
 
 def test_extract_invite_hash_from_common_links() -> None:
@@ -31,3 +31,14 @@ def test_parse_source_ref_public_and_private() -> None:
 
 def test_private_message_url() -> None:
     assert private_message_url(-1001234567890, 42) == "https://t.me/c/1234567890/42"
+
+
+def test_maps_unregistered_session_to_login_hint() -> None:
+    class CheckChatInviteRequest:
+        pass
+
+    from telethon.errors import AuthKeyUnregisteredError
+
+    message = map_telegram_error(AuthKeyUnregisteredError(CheckChatInviteRequest()))
+    assert "Сессия Telegram" in message
+    assert "войдите заново" in message.lower()

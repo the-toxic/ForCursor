@@ -99,13 +99,14 @@ async def create_source(
             status_code=400,
             detail="Чтобы добавить закрытый канал, укажите API ID и API Hash в блоке «Закрытые каналы».",
         )
-    if not await telegram_user_service.is_authorized(api_id, api_hash, settings.telegram_session_path):
+    session = await telegram_user_service.status(api_id, api_hash, settings.telegram_session_path)
+    if not session.get("authorized"):
         raise HTTPException(
             status_code=400,
-            detail="Войдите в Telegram-аккаунт в блоке «Закрытые каналы», затем вставьте ссылку-приглашение.",
+            detail=str(session.get("error") or "Войдите в Telegram-аккаунт в блоке «Закрытые каналы», затем вставьте ссылку-приглашение."),
         )
     try:
-        title, _joined_username, peer_id = await telegram_user_service.join_invite(
+        joined = await telegram_user_service.join_invite(
             api_id,
             api_hash,
             settings.telegram_session_path,
@@ -116,12 +117,13 @@ async def create_source(
 
     source = Source(
         username=parsed.username,
-        title=title,
+        title=joined.title,
         enabled=True,
         source_kind="private",
         invite_hash=parsed.invite_hash,
         invite_link=parsed.invite_link,
-        telegram_peer_id=str(peer_id),
+        telegram_peer_id=str(joined.peer_id),
+        telegram_access_hash=joined.access_hash,
     )
     db.add(source)
     db.commit()
